@@ -26,14 +26,22 @@ def load_customer_data():
         else:
             return f"Sales data file not found in directory: {DATA}", None
             
-        sales = sales.copy()
+   
+        sales = sales.copy(deep=True)
         sales['Order_Date'] = pd.to_datetime(sales['Order_Date'])
         
+        if 'Customer_ID' in sales.columns:
+            sales['Customer_ID'] = sales['Customer_ID'].astype(str)
+        if 'Invoice_ID' in sales.columns:
+            sales['Invoice_ID'] = sales['Invoice_ID'].astype(str)
+        if 'Product_Name' in sales.columns:
+            sales['Product_Name'] = sales['Product_Name'].astype(str)
+            
         if 'Net_Sales_EGP' in sales.columns:
-            valid_sales = sales[sales['Net_Sales_EGP'] > 0].copy()
+            valid_sales = sales[sales['Net_Sales_EGP'] > 0].copy(deep=True)
             monetary_col = 'Net_Sales_EGP'
         else:
-            valid_sales = sales.copy()
+            valid_sales = sales.copy(deep=True)
             monetary_col = 'Gross_Sales_EGP' if 'Gross_Sales_EGP' in sales.columns else 'Quantity'
 
         snapshot_date = valid_sales['Order_Date'].max() + dt.timedelta(days=1)
@@ -44,11 +52,11 @@ def load_customer_data():
             Monetary=(monetary_col, 'sum')
         ).reset_index()
         
-        rfm['R'] = pd.qcut(rfm['Recency'].rank(method='first', ascending=False), q=4, labels=[1, 2, 3, 4])
-        rfm['F'] = pd.qcut(rfm['Frequency'].rank(method='first'), q=4, labels=[1, 2, 3, 4])
-        rfm['M'] = pd.qcut(rfm['Monetary'].rank(method='first'), q=4, labels=[1, 2, 3, 4])
+        rfm['R'] = pd.qcut(rfm['Recency'].rank(method='first', ascending=False), q=4, labels=[1, 2, 3, 4]).astype(int)
+        rfm['F'] = pd.qcut(rfm['Frequency'].rank(method='first'), q=4, labels=[1, 2, 3, 4]).astype(int)
+        rfm['M'] = pd.qcut(rfm['Monetary'].rank(method='first'), q=4, labels=[1, 2, 3, 4]).astype(int)
         
-        rfm['RFM_Score'] = rfm[['R', 'F', 'M']].astype(int).sum(axis=1)
+        rfm['RFM_Score'] = rfm['R'] + rfm['F'] + rfm['M']
         
         def segment_customer(score):
             if score >= 10: return 'VIP'
