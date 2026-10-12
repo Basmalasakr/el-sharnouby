@@ -26,7 +26,6 @@ def load_customer_data():
         else:
             return f"Sales data file not found in directory: {DATA}", None
             
-   
         sales = sales.copy(deep=True)
         sales['Order_Date'] = pd.to_datetime(sales['Order_Date'])
         
@@ -71,7 +70,11 @@ def load_customer_data():
         basket = valid_sales.groupby(['Invoice_ID', 'Product_Name'])['Quantity'].sum().unstack(fill_value=0)
         basket = (basket > 0).astype(int)
         co_matrix = basket.T.dot(basket)
-        np.fill_diagonal(co_matrix.values, 0)
+        
+        # حل مشكلة الـ Read-only array
+        co_vals = co_matrix.values.copy()
+        np.fill_diagonal(co_vals, 0)
+        co_matrix = pd.DataFrame(co_vals, index=co_matrix.index, columns=co_matrix.columns)
         
         recs = []
         for prod in co_matrix.index:
