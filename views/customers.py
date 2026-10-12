@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -6,18 +7,23 @@ import numpy as np
 import datetime as dt
 from theme import header, kpi, insight
 
-DATA_DIR = "data/"
+DATA = Path(os.environ.get("DATA_DIR") or Path(__file__).resolve().parents[1] / "data")
 
 st.set_page_config(layout="wide", page_title="Customer 360")
 header("Customer 360 & Retention Engine", "Analyze customer behavior, loyalty levels, and generate next-best-offer recommendations.", "APP 03")
 
 @st.cache_data(show_spinner=False)
 def load_customer_data():
+    csv_path = DATA / "Sales_Transactions.csv"
+    pq_path = DATA / "Sales_Transactions.parquet"
+    
     try:
-        try:
-            sales = pd.read_csv(DATA_DIR + 'Sales_Transactions.csv')
-        except:
-            sales = pd.read_parquet(DATA_DIR + 'Sales_Transactions.parquet')
+        if csv_path.exists():
+            sales = pd.read_csv(csv_path)
+        elif pq_path.exists():
+            sales = pd.read_parquet(pq_path)
+        else:
+            return "Sales data file (CSV or Parquet) not found in data directory.", None
             
         sales['Order_Date'] = pd.to_datetime(sales['Order_Date'])
         
@@ -100,7 +106,7 @@ def load_customer_data():
 rfm_data, recommendations = load_customer_data()
 
 if isinstance(rfm_data, str):
-    st.error("Sales data file is missing. Please ensure 'Sales_Transactions.parquet' or '.csv' is in the data folder.")
+    st.error(f"Error: {rfm_data} (Looking in: {DATA})")
 else:
     tab_profiles, tab_retention = st.tabs(["1. Customer Profiles & Loyalty", "2. Retention & Next Best Offer"])
 
