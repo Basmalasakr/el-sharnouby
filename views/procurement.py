@@ -153,5 +153,4 @@ with t3:
             def highlight_risk(val):
                 color = '#EF4444' if val == 1 else ''
                 return f'background-color: {color}'
-                
-            st.dataframe(prod_bom.style.applymap(highlight_risk, subset=['Available_Suppliers']), use_container_width=True, hide_index=True)
+            st.dataframe(prod_bom.style.map(highlight_risk, subset=['Available_Suppliers']), use_container_width=True, hide_index=True)    
