@@ -245,9 +245,6 @@ with t3:
             e = pd.read_csv(ext)
             
             if 'WAPE_Error' in e.columns:
-                avg_wape = e['WAPE_Error'].mean()
-                st.success(f"Model Active! Average Accuracy Error (WAPE): {avg_wape:.1f}%")
-                
                 if e['Forecast_60d'].sum() < e['Forecast_30d'].sum() * 1.5:  
                     e['Cum_60d'] = e['Forecast_30d'] + e['Forecast_60d']
                     e['Cum_90d'] = e['Cum_60d'] + e['Forecast_90d']
@@ -255,9 +252,8 @@ with t3:
                     e['Cum_60d'] = e['Forecast_60d']
                     e['Cum_90d'] = e['Forecast_90d']
                 
-                display_cols = ['Product_ID', 'Forecast_30d', 'Cum_60d', 'Cum_90d', 'WAPE_Error']
+                display_cols = ['Product_ID', 'Forecast_30d', 'Cum_60d', 'Cum_90d']
                 e_display = e[[c for c in display_cols if c in e.columns]].copy()
-                e_display['WAPE_Error'] = e_display['WAPE_Error'].round(1).astype(str) + "%"
                 st.dataframe(e_display.head(8), use_container_width=True, hide_index=True)
         else:
             st.info("Pending ML model output... Please place 'Forecast_Results.csv' in the data folder.")
