@@ -7,7 +7,8 @@ import numpy as np
 import datetime as dt
 from theme import header, kpi, insight
 
-DATA = Path(os.environ.get("DATA_DIR") or Path(__file__).resolve().parents[1] / "data")
+base_path = Path(__file__).resolve().parents[1]
+DATA = base_path / "data" if (base_path / "data").exists() else base_path / "DATA"
 
 st.set_page_config(layout="wide", page_title="Customer 360")
 header("Customer 360 & Retention Engine", "Analyze customer behavior, loyalty levels, and generate next-best-offer recommendations.", "APP 03")
@@ -23,8 +24,9 @@ def load_customer_data():
         elif pq_path.exists():
             sales = pd.read_parquet(pq_path)
         else:
-            return "Sales data file (CSV or Parquet) not found in data directory.", None
+            return f"Sales data file not found in directory: {DATA}", None
             
+        sales = sales.copy()
         sales['Order_Date'] = pd.to_datetime(sales['Order_Date'])
         
         if 'Net_Sales_EGP' in sales.columns:
@@ -106,7 +108,7 @@ def load_customer_data():
 rfm_data, recommendations = load_customer_data()
 
 if isinstance(rfm_data, str):
-    st.error(f"Error: {rfm_data} (Looking in: {DATA})")
+    st.error(f"Error: {rfm_data}")
 else:
     tab_profiles, tab_retention = st.tabs(["1. Customer Profiles & Loyalty", "2. Retention & Next Best Offer"])
 
