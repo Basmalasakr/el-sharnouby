@@ -7,11 +7,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from theme import header, kpi, insight, plot
 
-# افترضنا وجود مكتبة Groq للاتصال بالـ LLM (تأكدي من تثبيتها: pip install groq)
 try:
     from groq import Groq
 except ImportError:
-    pass # سيتم التعامل معها لاحقاً في التاب الرابع
+    pass 
 
 DATA_DIR = "data/"
 
@@ -145,9 +144,9 @@ with t3:
 
 with t4:
     st.markdown("**AI Scenario Copilot (LLM-Powered)**")
-    st.caption("Ask the Copilot to simulate business scenarios in Arabic. The LLM extracts parameters to run real-time simulations.")
+    st.caption("Ask the Copilot to simulate business scenarios. The LLM extracts parameters to run real-time simulations.")
     
-    user_scenario = st.text_input("Describe your scenario (Arabic/English):", placeholder="Example: ماذا يحدث للطلبيات المتأخرة إذا تم زيادة الأوفر تايم بنسبة 20% وتكلفة الخامات زادت 10%؟")
+    user_scenario = st.text_input("Describe your scenario:", placeholder="Example: ماذا يحدث للطلبيات المتأخرة إذا تم زيادة الأوفر تايم بنسبة 20% وتكلفة الخامات زادت 10%؟")
     
     if st.button("Run AI Simulation", type="primary"):
         if not user_scenario:
@@ -155,7 +154,6 @@ with t4:
         else:
             with st.spinner("LLM is analyzing the text and running the simulation..."):
                 try:
-                    # تعديل: قراءة المفتاح من Streamlit Secrets
                     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
                     
                     sys_prompt = """You are a strict data extraction system. Extract two numerical values from the user's text:
@@ -165,7 +163,7 @@ with t4:
                     Output ONLY a valid JSON object. No explanations, no markdown tags."""
                     
                     response = client.chat.completions.create(
-                        model="llama3-8b-8192",
+                        model="openai/gpt-oss-20b",  
                         messages=[
                             {"role": "system", "content": sys_prompt},
                             {"role": "user", "content": user_scenario}
@@ -179,9 +177,8 @@ with t4:
                     mat_cost_sim = min(int(extracted_data.get("material_cost_pct", 0)), 100)
                     
                 except Exception as e:
-                    # Fallback in case of API error or missing Key
-                    st.error("LLM Connection failed or API key missing. Falling back to basic extraction.")
-                    ot_sim, mat_cost_sim = 15, 5 # قيم افتراضية للمثال في حالة فشل الاتصال
+                    st.error(f"LLM Connection failed. Technical Error: {str(e)}")
+                    ot_sim, mat_cost_sim = -1, -1 
                 
                 if ot_sim >= 0 or mat_cost_sim >= 0:
                     st.success("Scenario Parameters Extracted Successfully via LLM!")
