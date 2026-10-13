@@ -117,18 +117,77 @@ with t2:
                 pareto_df['Cumulative_Pct'] = (pareto_df['Estimated_Loss_EGP'].cumsum() / pareto_df['Estimated_Loss_EGP'].sum()) * 100
                 insight(f"**EXECUTIVE RECOMMENDATION:** The root cause **'{top_cause}'** is responsible for the highest financial leakage (**{top_loss:,.0f} EGP**). Immediate corrective actions are required.")
                 
-                with st.container(border=True):
+                # --- الصف الأول: باريتو + الدونات شارت ---
+                c_q1, c_q2 = st.columns([1.5, 1])
+                
+                with c_q1, st.container(border=True):
                     st.markdown("**Financial Loss by Root Cause (Pareto 80/20)**")
                     fig_pareto = go.Figure()
                     fig_pareto.add_trace(go.Bar(x=pareto_df['Root_Cause'], y=pareto_df['Estimated_Loss_EGP'], name='Loss (EGP)', marker_color='#3B82F6'))
                     fig_pareto.add_trace(go.Scatter(x=pareto_df['Root_Cause'], y=pareto_df['Cumulative_Pct'], name='Cumulative %', mode='lines+markers', yaxis='y2', marker_color='#EF4444'))
                     fig_pareto.update_layout(yaxis=dict(title='Estimated Loss (EGP)'), yaxis2=dict(title='Cumulative %', overlaying='y', side='right', range=[0, 105]), margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-                    plot(fig_pareto, 350)
+                    plot(fig_pareto, 400)
+                
+                with c_q2, st.container(border=True):
+                    st.markdown("**Defects by Stage & Product**")
+                    if 'Stage' in qc.columns:
+                        stage_loss = qc.groupby('Stage')['Estimated_Loss_EGP'].sum().reset_index()
+                        fig_stage = px.pie(stage_loss, values='Estimated_Loss_EGP', names='Stage', hole=0.4, 
+                                           color_discrete_sequence=px.colors.qualitative.Pastel)
+                        fig_stage.update_traces(textposition='inside', textinfo='percent+label')
+                        fig_stage.update_layout(margin=dict(l=0, r=0, t=10, b=0), showlegend=False)
+                        plot(fig_stage, 180)
+                        
+                        st.markdown("<hr style='margin: 10px 0;'>", unsafe_allow_html=True)
+                        
+                        if 'Product_Name' in qc.columns:
+                            prod_loss = qc.groupby('Product_Name').agg(
+                                Defects=('Rejected_Qty', 'sum'),
+                                Loss_EGP=('Estimated_Loss_EGP', 'sum')
+                            ).reset_index().sort_values('Loss_EGP', ascending=False)
+                            prod_loss['Loss_EGP'] = prod_loss['Loss_EGP'].apply(lambda x: f"{x:,.0f}")
+                            st.dataframe(prod_loss, use_container_width=True, hide_index=True)
+                
+                # --- الصف الثاني: مصفوفة الإجراءات التصحيحية ---
+                with st.container(border=True):
+                    st.markdown("**Ranked Corrective Action Priority Matrix**")
+                    action_df = pareto_df.copy()
+                    
+                    def assign_priority(cum_pct):
+                        if cum_pct <= 80.0: return "CRITICAL"
+                        elif cum_pct <= 95.0: return "HIGH"
+                        else: return "MONITOR"
+                        
+                    def assign_owner(cause):
+                        c = str(cause).lower()
+                        if "machine" in c or "calibration" in c: return "Maintenance Eng."
+                        if "material" in c or "fabric" in c: return "Procurement Dept."
+                        if "operator" in c or "human" in c: return "Production Supervisor"
+                        if "print" in c or "ink" in c: return "Printing Facility Manager"
+                        return "QA Manager"
+                        
+                    action_df['Action_Priority'] = action_df['Cumulative_Pct'].apply(assign_priority)
+                    action_df['Assigned_Owner'] = action_df['Root_Cause'].apply(assign_owner)
+                    action_df['Estimated_Loss_EGP'] = action_df['Estimated_Loss_EGP'].apply(lambda x: f"{x:,.0f} EGP")
+                    
+                    disp_action = action_df[['Root_Cause', 'Estimated_Loss_EGP', 'Action_Priority', 'Assigned_Owner']]
+                    
+                    def color_priority(val):
+                        if 'CRITICAL' in val: return 'color: white; background-color: #EF4444; font-weight: bold;'
+                        if 'HIGH' in val: return 'color: black; background-color: #FBBF24;'
+                        return ''
+                        
+                    st.dataframe(disp_action.style.map(color_priority, subset=['Action_Priority']), use_container_width=True, hide_index=True)
 
 with t3:
     st.markdown("**Equipment Downtime & Maintenance**")
     if not md.empty:
-        unplanned_md = md[md['Planned'].astype(bool) == False] if 'Planned' in md.columns else md
+        if 'Planned' in md.columns:
+            planned_series = md['Planned'].astype(str).str.strip().str.lower()
+            unplanned_md = md[planned_series.isin(['no', 'false', '0', 'f'])]
+        else:
+            unplanned_md = md
+            
         total_downtime = unplanned_md['Downtime_Hours'].sum() if 'Downtime_Hours' in unplanned_md.columns else 0
         
         st.markdown(kpi("Unplanned Downtime", f"{total_downtime:,.1f} Hrs", "Machine breakdown time", "bad"), unsafe_allow_html=True)
@@ -137,22 +196,52 @@ with t3:
         with st.container(border=True):
             st.markdown("**Prescriptive Maintenance Priorities**")
             if 'Machine_ID' in unplanned_md.columns and 'Downtime_Hours' in unplanned_md.columns:
-                priority = unplanned_md.groupby(['Machine_ID', 'Reason']).agg(Incidents=('Downtime_Hours', 'count'), Total_Hours=('Downtime_Hours', 'sum')).reset_index().sort_values('Total_Hours', ascending=False).head(8)
+                priority = unplanned_md.groupby(['Machine_ID', 'Reason']).agg(
+                    Incidents=('Downtime_Hours', 'count'), 
+                    Total_Hours=('Downtime_Hours', 'sum')
+                ).reset_index().sort_values('Total_Hours', ascending=False).head(8)
+                
                 if not priority.empty:
-                    priority['Risk_Level'] = np.where(priority['Total_Hours'] >= priority['Total_Hours'].quantile(0.75), 'High', 'Medium')
-                    st.dataframe(priority, use_container_width=True, hide_index=True)
+                    priority['Risk_Level'] = np.where(priority['Total_Hours'] >= priority['Total_Hours'].quantile(0.75), 'CRITICAL', 'HIGH')
+                    
+                    def color_maintenance_risk(val):
+                        if val == 'CRITICAL': return 'color: white; background-color: #EF4444; font-weight: bold;'
+                        if val == 'HIGH': return 'color: black; background-color: #FBBF24;'
+                        return ''
+                        
+                    st.dataframe(priority.style.map(color_maintenance_risk, subset=['Risk_Level']), use_container_width=True, hide_index=True)
 
 with t4:
-    st.markdown("**AI Scenario Copilot (LLM-Powered)**")
-    st.caption("Ask the Copilot to simulate business scenarios. The LLM extracts parameters to run real-time simulations.")
+    st.markdown("**AI Scenario Copilot & Advanced Simulation**")
+    st.caption("Select the scope of your simulation, then ask the AI to apply operational changes (e.g., 'What if material cost increases by 10% and overtime by 20%?').")
     
-    user_scenario = st.text_input("Describe your scenario:", placeholder="Example: ماذا يحدث للطلبيات المتأخرة إذا تم زيادة الأوفر تايم بنسبة 20% وتكلفة الخامات زادت 10%؟")
+    # --- إعداد فلاتر نطاق العمل (Scope) ---
+    c_filters1, c_filters2, c_filters3 = st.columns(3)
+    
+    if not po.empty and 'Product_Name' in po.columns:
+        product_list = ["All Products"] + list(po['Product_Name'].dropna().unique())
+    else:
+        product_list = ["All Products"]
+    selected_product = c_filters1.selectbox("Target Product:", product_list)
+    
+    if not po.empty and 'Start_Date' in po.columns:
+        month_list = ["All Months"] + [f"Month {m}" for m in sorted(po['Start_Date'].dt.month.dropna().unique())]
+    else:
+        month_list = ["All Months"]
+    selected_month = c_filters2.selectbox("Target Month:", month_list)
+    
+    selected_qty = c_filters3.number_input("Target Quantity (0 = Full Backlog):", min_value=0, value=0, step=1)
+    
+    st.markdown("---")
+    
+    # --- مربع السيناريو الذكي (AI Copilot) ---
+    user_scenario = st.text_input("Describe your operational changes (Arabic/English):", placeholder="مثال: ماذا يحدث للطلبيات المتأخرة إذا تم زيادة الأوفر تايم بنسبة 20% وتكلفة الخامات زادت 10%؟")
     
     if st.button("Run AI Simulation", type="primary"):
         if not user_scenario:
             st.warning("Please enter a scenario first.")
         else:
-            with st.spinner("LLM is analyzing the text and running the simulation..."):
+            with st.spinner("AI is analyzing the scenario parameters and applying them to the selected scope..."):
                 try:
                     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
                     
@@ -163,7 +252,7 @@ with t4:
                     Output ONLY a valid JSON object. No explanations, no markdown tags."""
                     
                     response = client.chat.completions.create(
-                        model="openai/gpt-oss-20b",  
+                        model="openai/gpt-oss-20b",
                         messages=[
                             {"role": "system", "content": sys_prompt},
                             {"role": "user", "content": user_scenario}
@@ -181,28 +270,39 @@ with t4:
                     ot_sim, mat_cost_sim = -1, -1 
                 
                 if ot_sim >= 0 or mat_cost_sim >= 0:
-                    st.success("Scenario Parameters Extracted Successfully via LLM!")
-                    s1, s2 = st.columns(2)
-                    s1.info(f"**Extracted Overtime Increase:** {ot_sim}%")
-                    s2.warning(f"**Extracted Material Cost Increase:** {mat_cost_sim}%")
                     
-                    if not po.empty:
+                    # --- تطبيق الفلاتر التي اختارها المستخدم ---
+                    filtered_po = po.copy()
+                    
+                    if selected_product != "All Products" and not filtered_po.empty:
+                        filtered_po = filtered_po[filtered_po['Product_Name'] == selected_product]
+                        
+                    if selected_month != "All Months" and not filtered_po.empty and 'Start_Date' in filtered_po.columns:
+                        month_num = int(selected_month.split()[1]) 
+                        filtered_po = filtered_po[filtered_po['Start_Date'].dt.month == month_num]
+                    
+                    if not filtered_po.empty:
                         st.markdown("### Simulation Results")
-                        base_late_orders = len(po[po['Delay_Days'] > 0]) if 'Delay_Days' in po.columns else 0
+                        
+                        base_late_orders = len(filtered_po[filtered_po['Delay_Days'] > 0]) if 'Delay_Days' in filtered_po.columns else 0
                         recovered_orders = int(base_late_orders * (ot_sim / 100.0) * 0.8)
                         sim_late_orders = base_late_orders - recovered_orders
                         
-                        total_cogs = po['Planned_Qty'].sum() * 200 
+                        sim_qty = selected_qty if selected_qty > 0 else filtered_po['Planned_Qty'].sum()
+                        
+                        total_cogs = sim_qty * 200 
                         new_cogs = total_cogs * (1 + (mat_cost_sim / 100.0))
                         cogs_increase = new_cogs - total_cogs
                         
                         c1, c2, c3 = st.columns(3)
-                        c1.markdown(kpi("Late Orders Recovered", f"{recovered_orders:,}", f"Due to {ot_sim}% Overtime", "ok"), unsafe_allow_html=True)
-                        c2.markdown(kpi("Remaining Late Orders", f"{sim_late_orders:,}", "Requires further action", "warn"), unsafe_allow_html=True)
-                        c3.markdown(kpi("COGS Impact", f"+{cogs_increase/1e6:,.2f}M EGP", f"Due to {mat_cost_sim}% Material Cost", "bad" if mat_cost_sim > 0 else "info"), unsafe_allow_html=True)
+                        c1.markdown(kpi("Late Orders Recovered", f"{recovered_orders:,}", f"Assuming {ot_sim}% Overtime", "ok"), unsafe_allow_html=True)
+                        c2.markdown(kpi("Remaining Late Orders", f"{sim_late_orders:,}", f"Out of {base_late_orders} in scope", "warn"), unsafe_allow_html=True)
+                        c3.markdown(kpi("COGS Impact", f"+{cogs_increase/1e6:,.2f}M EGP", f"Based on {sim_qty:,.0f} units", "bad" if mat_cost_sim > 0 else "info"), unsafe_allow_html=True)
                         
                         st.write("")
                         if mat_cost_sim > ot_sim:
-                            st.markdown("**Copilot Recommendation:** The financial impact of the material cost increase outweighs the operational benefits of the overtime recovery. Re-evaluate supplier contracts immediately.")
+                            st.markdown("**Copilot Recommendation:** The financial impact of the material cost increase outweighs the operational benefits of the overtime recovery in this specific scope. Re-evaluate supplier contracts immediately.")
                         elif ot_sim > 0:
-                            st.markdown(f"**Copilot Recommendation:** Proceed with the {ot_sim}% overtime plan. Focus this capacity on the primary bottleneck machine to maximize the recovery of the {recovered_orders} delayed orders.")
+                            st.markdown(f"**Copilot Recommendation:** Proceed with the {ot_sim}% overtime plan for this scope. Focus this capacity on the primary bottleneck machine to maximize the recovery of the {recovered_orders} delayed orders.")
+                    else:
+                        st.warning("No data matches the selected criteria. Please try a different scope.")
