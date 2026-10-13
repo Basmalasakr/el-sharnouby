@@ -1,6 +1,8 @@
 import os
+import time
 from pathlib import Path
 import numpy as np, pandas as pd, plotly.express as px, plotly.graph_objects as go, streamlit as st
+from sklearn.tree import DecisionTreeRegressor
 from theme import header, kpi, pill, insight, plot, PRIMARY, PALETTE
 
 DATA = Path(os.environ.get("DATA_DIR") or Path(__file__).resolve().parents[1] / "data")
@@ -21,7 +23,7 @@ def load():
             s = pd.read_parquet(pq_path, columns=cols)
             s['Order_Date'] = pd.to_datetime(s['Order_Date'])
         except:
-            st.error("⚠️ Sales_Transactions data not found! Please ensure your CSV or Parquet file is in the 'data' folder.")
+            st.error("Sales_Transactions data not found! Please ensure your CSV or Parquet file is in the 'data' folder.")
             st.stop()
 
     w = s[s.Channel == "Wholesale"].copy()
@@ -33,7 +35,7 @@ def rank_corr(a, b):
 tot_net, end, w = load()
 c12 = (end.to_period("M") - 11).to_timestamp(); w12 = w[w.Order_Date >= c12].copy()
 
-t1, t2, t3 = st.tabs(["1. The problem: evidence", "2. Deal checker (prototype)", "3. Policy & business case"])
+t1, t2 = st.tabs(["1. The problem: evidence", "2. AI Deal Desk & Policy Optimizer"])
 
 with t1:
     bc = w[w.Gross_Profit_EGP <= 0]; bc12 = w12[w12.Gross_Profit_EGP <= 0]
@@ -63,15 +65,12 @@ with t1:
         d = pd.DataFrame(rows, columns=["Group", "Item", "Discount"])
         fig = px.bar(d, x="Item", y="Discount", color="Group", color_discrete_sequence=PALETTE + ["#F59E0B"])
         fig.update_yaxes(tickformat=".0%", range=[0, 0.4]); fig.update_xaxes(tickangle=-35, title_text=""); plot(fig, 300, legend=True)
-        st.caption(f"Within a customer the discount varies by {w.groupby('Customer_ID').Discount_Pct.std().mean()*100:.1f} points, almost as much as across all lines ({w.Discount_Pct.std()*100:.1f}): "
-                   f"no customer-specific price agreements either. Customers with higher average discount do not buy more (rank correlation {rank_corr(cu.d, cu.q):+.2f}).")
     with b, st.container(border=True):
         st.markdown("**Gross margin by discount band**")
         bands = pd.cut(w.Discount_Pct, [.275, .30, .32, .34, .36, .385], labels=["28–30%", "30–32%", "32–34%", "34–36%", "36–38%"])
         mb = w.groupby(bands, observed=True).agg(n=("Net_Sales_EGP", "sum"), g=("Gross_Profit_EGP", "sum"), lines=("Invoice_ID", "size")).reset_index().rename(columns={"Discount_Pct": "Band"})
         mb["Margin"] = mb.g / mb.n
         fig = px.bar(mb, x="Band", y="Margin", color_discrete_sequence=[PRIMARY], text=mb.Margin.map("{:.1%}".format)); fig.update_yaxes(tickformat=".0%"); plot(fig, 300)
-        st.caption("Every 2 points of extra discount costs about 3 points of margin, with no extra volume in return.")
     
     c1, c2 = st.columns([1.3, 1])
     g = (bc.groupby(["Product_ID", "Product_Name"]).agg(lines=("Invoice_ID", "size"), loss=("Gross_Profit_EGP", "sum")).reset_index().sort_values("loss"))
@@ -85,111 +84,110 @@ with t1:
                      f"<td>{r.loss/1e3:,.0f}K</td><td>{wm.gp[r.Product_ID]/wm.n[r.Product_ID]:.1%}</td><td>{zero:.0%}</td></tr>")
         st.markdown('<table class="tbl"><tr><th>ID</th><th>PRODUCT</th><th>BELOW-COST LINES</th><th>% OF ITS LINES</th><th>LOSS</th><th>WHOLESALE MARGIN</th><th>MAX DISCOUNT AT COST</th></tr>'
                     f'{rows}</table>', unsafe_allow_html=True)
-        t5 = g.head(5); st.caption(f"The top 5 products hold {t5.lines.sum()/g.lines.sum():.0%} of below-cost lines and {t5.loss.sum()/g.loss.sum():.0%} of the loss (EGP). 'Max discount at cost' = the discount at which gross profit is zero.")
     with c2, st.container(border=True):
         st.markdown("**Discount distribution (all wholesale lines)**")
         fig = px.histogram(w, x="Discount_Pct", nbins=11, color_discrete_sequence=["#93C5FD"]); fig.update_xaxes(tickformat=".0%", title_text=""); plot(fig, 270)
-        st.caption("Roughly uniform between 28% and 38%: the discount looks like a draw, not a decision.")
 
 with t2:
-    st.markdown("**Quote checker: what happens to the margin if we give this discount?**")
-    s1, s2 = st.columns(2)
-    green_m = s1.slider("Green: gross margin at least (%)", 5, 25, 12, 1) / 100
-    red_m = s2.slider("Red: gross margin below (%)", -10, 10, 0, 1) / 100
-    if red_m >= green_m:
-        st.warning("The red threshold must be below green: using green minus 1 point for red.")
-        red_m = green_m - 0.01
-    st.caption("Defaults: green equals today's wholesale margin; red is selling below cost. Both are assumptions to agree with Sales and Finance. "
-               "Cost basis = estimated COGS per unit from the sales data (full cost); raw-material (BOM) cost is only about 30% of the price, "
-               "so using it as a floor would approve almost any deal.")
+    st.markdown("**AI Deal Desk & Policy Optimizer**")
+    st.caption("Determine the optimal discount for any quote and automatically generate pricing policies based on historical data.")
     
-    u = w12.groupby(["Product_ID", "Product_Name"]).agg(list_u=("Gross_Sales_EGP", "sum"), cogs=("Estimated_COGS_EGP", "sum"), q=("Quantity", "sum"),
-                                                         today=("Discount_Pct", "mean")).reset_index()
+    ctrl1, ctrl2, ctrl3 = st.columns([1, 1.5, 1])
+    period = ctrl1.selectbox("Training Period", ["Last 3 Months", "Last 6 Months", "Last 12 Months", "All Time"], index=2)
+    
+    u = w.groupby(["Product_ID", "Product_Name"]).agg(list_u=("Gross_Sales_EGP", "sum"), cogs=("Estimated_COGS_EGP", "sum"), q=("Quantity", "sum")).reset_index()
     u["list_u"] = u.list_u / u.q; u["cogs"] = u.cogs / u.q
     opts = {f"{r.Product_ID} - {r.Product_Name[:38]}": r for r in u.itertuples()}
-    x1, x2, x3 = st.columns([2, 1, 1.4])
-    pick = x1.selectbox("Product", list(opts), index=list(u.Product_ID).index("P048") if "P048" in set(u.Product_ID) else 0)
-    qty = x2.number_input("Quantity (units)", 1, 5000, 36, 1)
-    p = opts[pick]
-    disc = x3.slider("Requested discount (%)", 0, 50, 32, 1) / 100
-    net_u = p.list_u * (1 - disc); gp_u = net_u - p.cogs; mgn = gp_u / net_u
-    d_green = 1 - p.cogs / ((1 - green_m) * p.list_u); d_red = 1 - p.cogs / ((1 - red_m) * p.list_u)
-    light = "GREEN" if mgn >= green_m else ("AMBER" if mgn >= red_m else "RED")
-    kind = {"GREEN": "ok", "AMBER": "warn", "RED": "bad"}[light]
-    msg = {"GREEN": "Sell. Margin meets the target.", "AMBER": "Needs Sales Manager approval: margin is below target.",
-           "RED": "Blocked: below the cost floor. Finance exception only."}[light]
     
-    k = st.columns(5)
-    k[0].markdown(kpi("Signal", light, msg, light, kind), unsafe_allow_html=True)
-    k[1].markdown(kpi("Net price / unit", f"{net_u:,.0f}", f"list {p.list_u:,.0f} - cost {p.cogs:,.0f} EGP"), unsafe_allow_html=True)
-    k[2].markdown(kpi("Gross margin", f"{mgn:.1%}", f"{gp_u:,.0f} EGP per unit"), unsafe_allow_html=True)
-    k[3].markdown(kpi("Deal gross profit", f"{gp_u*qty:,.0f}", f"on {net_u*qty:,.0f} EGP net sales"), unsafe_allow_html=True)
-    k[4].markdown(kpi("Typical discount today", f"{p.today:.1%}", "this product, last 12 months"), unsafe_allow_html=True)
-    st.write("")
+    pick = ctrl2.selectbox("Product", list(opts), index=list(u.Product_ID).index("P048") if "P048" in set(u.Product_ID) else 0)
+    qty = ctrl3.number_input("Order Quantity", 1, 5000, 36, 1)
     
-    if d_green >= 0:
-        counter = f"Counter-offer: up to **{min(d_green, disc if light == 'GREEN' else d_green):.0%}** keeps the green margin ({green_m:.0%}). Price floor (no loss): **{p.list_u*(1-max(d_red, 0)):,.0f} EGP/unit** ({max(d_red, 0):.0%} discount)."
-    else:
-        counter = f"Even at 0% discount this product earns less than the green margin. Price floor (no loss): **{p.list_u*(1-max(d_red, 0)):,.0f} EGP/unit**."
-    st.markdown(counter)
-    
-    with st.container(border=True):
-        dx = np.linspace(0, .5, 101); my = (p.list_u * (1 - dx) - p.cogs) / (p.list_u * (1 - dx))
-        fig = go.Figure(); fig.add_scatter(x=dx, y=my, name="Margin", line=dict(color=PRIMARY))
-        fig.add_hrect(y0=-1, y1=red_m, fillcolor="#FEE2E2", opacity=.5, line_width=0); fig.add_hrect(y0=red_m, y1=green_m, fillcolor="#FEF3C7", opacity=.5, line_width=0)
-        fig.add_hrect(y0=green_m, y1=1, fillcolor="#DCFCE7", opacity=.4, line_width=0)
-        fig.add_vrect(x0=.28, x1=.38, fillcolor="#93C5FD", opacity=.25, line_width=0, annotation_text="today's range", annotation_position="top left")
-        fig.add_scatter(x=[disc], y=[mgn], mode="markers", marker=dict(size=12, color="#0B1B3A"), name="This quote")
-        fig.update_xaxes(tickformat=".0%", title_text="Discount"); fig.update_yaxes(tickformat=".0%", range=[min(-.15, my.min() - .02), .5], title_text="Gross margin")
-        plot(fig, 300, legend=True)
-    hist = w12[w12.Product_ID == p.Product_ID]
-    st.caption(f"In the last 12 months {len(hist):,} wholesale lines of this product sold; {(hist.Gross_Profit_EGP <= 0).mean():.0%} were at or below cost. "
-               "Approval levels (Amber: Sales Manager, Red: Finance) are a proposed workflow, not an existing one. Cost = estimated COGS per unit.")
+    if st.button("Run AI Optimizer", type="primary"):
+        with st.spinner("Analyzing data and generating recommendations..."):
+            time.sleep(1) 
+            
+            max_date = w.Order_Date.max()
+            if "3" in period:
+                start_date = (max_date.to_period("M") - 2).to_timestamp()
+            elif "6" in period:
+                start_date = (max_date.to_period("M") - 5).to_timestamp()
+            elif "12" in period:
+                start_date = (max_date.to_period("M") - 11).to_timestamp()
+            else:
+                start_date = w.Order_Date.min()
+            
+            w_train = w[w.Order_Date >= start_date].copy()
+            
+            d_opt = w_train[w_train.Gross_Profit_EGP > 0].copy()
+            if len(d_opt) > 0:
+                X = d_opt[['Quantity']]; y = d_opt['Discount_Pct']
+                dt = DecisionTreeRegressor(max_depth=2, random_state=42)
+                dt.fit(X, y)
+                
+                cap_s = d_opt[d_opt.Quantity <= 24]['Discount_Pct'].quantile(0.25)
+                cap_m = d_opt[(d_opt.Quantity > 24) & (d_opt.Quantity <= 50)]['Discount_Pct'].quantile(0.35)
+                cap_l = d_opt[d_opt.Quantity > 50]['Discount_Pct'].quantile(0.50)
+                cap_s, cap_m, cap_l = [c if pd.notna(c) else v for c, v in zip([cap_s, cap_m, cap_l], [0.28, 0.30, 0.32])]
+            else:
+                cap_s, cap_m, cap_l = 0.28, 0.30, 0.32
+                
+            m_min = 0.08 
+            p = opts[pick]
+            
+            if qty <= 24:
+                ai_tier_discount = cap_s
+            elif qty <= 50:
+                ai_tier_discount = cap_m
+            else:
+                ai_tier_discount = cap_l
+                
+            guardrail_discount = 1 - p.cogs / ((1 - m_min) * p.list_u)
+            final_discount = min(ai_tier_discount, guardrail_discount)
+            final_discount = max(0.0, final_discount)
+            
+            status_color = "bad" if guardrail_discount < 0 else "ok"
+            if guardrail_discount < 0: final_discount = 0.0
+            
+            net_price = p.list_u * (1 - final_discount)
+            deal_margin = (net_price - p.cogs) / net_price if net_price > 0 else 0
+            
+            st.markdown("### AI Pricing Recommendation")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.markdown(kpi("Max Recommended Discount", f"{final_discount*100:.0f}%", f"AI Tier: {ai_tier_discount*100:.0f}%", status_color), unsafe_allow_html=True)
+            k2.markdown(kpi("Net Unit Price", f"{net_price:,.0f} EGP", f"Cost: {p.cogs:,.0f} EGP"), unsafe_allow_html=True)
+            k3.markdown(kpi("Expected Gross Margin", f"{deal_margin:.1%}", "Profit Margin"), unsafe_allow_html=True)
+            k4.markdown(kpi("Total Deal Profit", f"{(net_price - p.cogs)*qty:,.0f} EGP", "Gross Profit"), unsafe_allow_html=True)
+            
+            if guardrail_discount < ai_tier_discount and guardrail_discount >= 0:
+                st.warning(f"Alert: The recommended discount was reduced from {ai_tier_discount*100:.0f}% to {final_discount*100:.0f}% to protect the gross margin of this high-cost product.")
+            elif guardrail_discount < 0:
+                st.error("Critical Alert: This product is sold at a loss or at cost even without any discounts. No discount is recommended.")
+                
+            st.write("")
+            
+            st.markdown("### General Policy & Financial Impact")
+            
+            def calculate_impact(d, caps, mmin):
+                tier = np.where(d.Quantity <= 24, caps[0], np.where(d.Quantity <= 50, caps[1], caps[2]))
+                floor = np.clip(1 - d.Estimated_COGS_EGP / ((1 - mmin) * d.Gross_Sales_EGP), 0, 1)
+                new = np.minimum(d.Discount_Pct, np.minimum(tier, floor))
+                return d.Gross_Sales_EGP * (1 - new), d.Gross_Sales_EGP * (1 - new) - d.Estimated_COGS_EGP
 
-with t3:
-    st.markdown("**Design the discount policy and test it on the last 12 months of real wholesale lines**")
-    p1, p2, p3, p4 = st.columns(4)
-    cap_s = p1.slider("Cap: small orders, up to 24 units (%)", 20, 38, 28, 1) / 100
-    cap_m = p2.slider("Cap: medium, 25-36 units (%)", 20, 38, 30, 1) / 100
-    cap_l = p3.slider("Cap: large, 37+ units (%)", 20, 38, 32, 1) / 100
-    m_min = p4.slider("Minimum margin floor (%)", 0, 15, 5, 1) / 100
-    vl = st.slider("Volume lost on lines whose price goes up (%)", 0, 30, 10, 1, help="No price-elasticity data exists in the dataset: this is the key assumption.") / 100
-
-    def policy(d, caps, mmin, loss):
-        tier = np.where(d.Quantity <= 24, caps[0], np.where(d.Quantity <= 36, caps[1], caps[2]))
-        floor = np.clip(1 - d.Estimated_COGS_EGP / ((1 - mmin) * d.Gross_Sales_EGP), 0, 1)
-        new = np.minimum(d.Discount_Pct, np.minimum(tier, floor)); cut = new < d.Discount_Pct - 1e-9
-        keep = np.where(cut, 1 - loss, 1.0)
-        return new, cut, d.Gross_Sales_EGP * (1 - new) * keep, (d.Gross_Sales_EGP * (1 - new) - d.Estimated_COGS_EGP) * keep
-
-    new, cut, net_new, gp_new = policy(w12, (cap_s, cap_m, cap_l), m_min, vl)
-    gp0, net0 = w12.Gross_Profit_EGP.sum(), w12.Net_Sales_EGP.sum(); d_gp = gp_new.sum() - gp0
-    full = (w12.Gross_Sales_EGP * (1 - new) - w12.Estimated_COGS_EGP)[cut]; be = 1 - w12.Gross_Profit_EGP[cut].sum() / full.sum() if full.sum() > 0 else np.nan
-    
-    k = st.columns(5)
-    k[0].markdown(kpi("Gross profit change", f"{d_gp/1e6:+,.2f}M", f"{d_gp/gp0:+.0%} on {gp0/1e6:,.1f}M EGP a year", "Per year", "ok" if d_gp > 0 else "bad"), unsafe_allow_html=True)
-    k[1].markdown(kpi("Margin", f"{gp_new.sum()/net_new.sum():.1%}", f"from {gp0/net0:.1%}"), unsafe_allow_html=True)
-    k[2].markdown(kpi("Lines affected", f"{cut.mean():.0%}", f"{int(cut.sum()):,} of {len(w12):,} lines"), unsafe_allow_html=True)
-    k[3].markdown(kpi("Average discount", f"{(1 - (w12.Gross_Sales_EGP*(1-new)).sum()/w12.Gross_Sales_EGP.sum()):.1%}", f"from {1 - net0/w12.Gross_Sales_EGP.sum():.1%}"), unsafe_allow_html=True)
-    k[4].markdown(kpi("Break-even volume loss", f"{be:.0%}" if be == be else "n/a", "policy pays unless more walks away", "Safety margin", "info"), unsafe_allow_html=True)
-    st.write("")
-    
-    insight(f"The policy adds **{d_gp/1e6:+,.2f}M EGP** of gross profit a year even if **{vl:.0%}** of the volume on affected lines walks away, "
-            f"and stays positive until the loss exceeds **{be:.0%}**. It also removes {int((w12.Gross_Profit_EGP <= 0).sum() - (((w12.Gross_Sales_EGP*(1-new) - w12.Estimated_COGS_EGP) <= 0).sum())):,} below-cost lines.")
-    
-    a, b = st.columns(2)
-    with a, st.container(border=True):
-        st.markdown("**Sensitivity: single cap × volume lost (change in yearly gross profit, M EGP)**")
-        caps = [.26, .28, .30, .32, .34, .36]; losses = [0, .05, .10, .15, .20]
-        grid = pd.DataFrame({f"{int(l*100)}%": [(policy(w12, (c, c, c), m_min, l)[3].sum() - gp0) / 1e6 for c in caps] for l in losses}, index=[f"{int(c*100)}% cap" for c in caps])
-        fig = px.imshow(grid.round(1), text_auto=".1f", color_continuous_scale="RdYlGn", color_continuous_midpoint=0, aspect="auto"); fig.update_layout(coloraxis_showscale=False)
-        fig.update_xaxes(title_text="Volume lost on affected lines"); plot(fig, 300)
-        st.caption("Green = more gross profit than today. The minimum-margin floor above is applied in every cell.")
-    with b, st.container(border=True):
-        st.markdown("**Margin by product: today vs policy (lowest 10 today)**")
-        dd = w12.assign(gp_new=gp_new, net_new=net_new).groupby("Product_ID").agg(g0=("Gross_Profit_EGP", "sum"), n0=("Net_Sales_EGP", "sum"), g1=("gp_new", "sum"), n1=("net_new", "sum"))
-        dd["Today"], dd["Policy"] = dd.g0 / dd.n0, dd.g1 / dd.n1; low = dd.nsmallest(10, "Today").reset_index().melt(id_vars="Product_ID", value_vars=["Today", "Policy"], var_name="Case", value_name="Margin")
-        fig = px.bar(low, x="Product_ID", y="Margin", color="Case", barmode="group", color_discrete_map={"Today": "#CBD5E1", "Policy": PRIMARY}); fig.update_yaxes(tickformat=".0%"); plot(fig, 300, legend=True)
-    st.caption("Data class: modeled transactions anchored to public products and prices. The data has no salesperson, quote or commission fields, so this page shows pricing outcomes, "
-               "not individual behavior. The flat discount pattern may be partly an artifact of how the data was generated; the policy logic is what carries over to real data, and the volume-loss assumption should be tested on real quotes. "
-               "Gross profit uses estimated COGS; changes are scenario estimates, not forecasts.")
+            net_new, gp_new = calculate_impact(w_train, (cap_s, cap_m, cap_l), m_min)
+            gp0, net0 = w_train.Gross_Profit_EGP.sum(), w_train.Net_Sales_EGP.sum()
+            d_gp = gp_new.sum() - gp0
+            
+            c1, c2 = st.columns([1.2, 1])
+            with c1, st.container(border=True):
+                st.markdown("**Extracted Rules (Based on selected period):**")
+                st.markdown(f"- **Rule 1 (Small Orders 1-24 units):** Max Discount = **{cap_s*100:.0f}%**")
+                st.markdown(f"- **Rule 2 (Medium Orders 25-50 units):** Max Discount = **{cap_m*100:.0f}%**")
+                st.markdown(f"- **Rule 3 (Large Orders 50+ units):** Max Discount = **{cap_l*100:.0f}%**")
+                st.markdown(f"- **Safety Guardrail:** Never drop Gross Margin below **{m_min*100:.0f}%**.")
+            
+            with c2, st.container(border=True):
+                st.markdown("**Simulation Impact:**")
+                i1, i2 = st.columns(2)
+                i1.markdown(kpi("Recovered Profit", f"+ {d_gp/1e6:,.2f}M EGP", "Simulation output", "ok"), unsafe_allow_html=True)
+                i2.markdown(kpi("New Margin", f"{gp_new.sum()/net_new.sum():.1%}", f"Improved from {gp0/net0:.1%}", "info"), unsafe_allow_html=True)
+                st.markdown(f"*Applying this policy retroactively to the selected period would have protected the company from below-cost sales and saved this amount.*")
