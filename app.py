@@ -9,7 +9,7 @@ with st.sidebar:
 P = lambda f, t, i, **k: st.Page(f"views/{f}.py", title=t, icon=i, **k)
 nav = st.navigation({
     "Overview": [P("control_tower", "Executive Command Center", "", default=True)],
-    "Operations": [P("inventory", "Smart Inventory & Replenishment", ""), P("factory", "Factory & Printing", ""), P("quality", "Quality & Returns", ""),
+    "Operations": [P("inventory", "Smart Inventory & Replenishment", ""), P("factory", "Factory & Quality", ""),
                    P("procurement", "Procurement & Risk", "")],
     "Commercial": [P("customers", "Customer 360", ""), P("marketing", "Marketing & Growth", ""),
                    P("branches", "Channel & Expansion", "")],
