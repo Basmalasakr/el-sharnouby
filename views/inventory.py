@@ -164,7 +164,8 @@ with st.container(border=True):
     buf = c3.slider("Lead Time Delay (days)", 0, 30, 0, 1)
     review = c4.slider("Review cycle (days)", 7, 60, 30, 1)
 
-t1, t2, t3 = st.tabs(["1. Health & Financial Leakage", "2. Intelligence (ABC/XYZ)", "3. Action Plan & Transfers"])
+ 
+t1, t2, t3, t4 = st.tabs(["1. Health & Financial Leakage", "2. Intelligence (ABC/XYZ)", "3. Action Plan & Transfers", "4. AI Demand Forecasting"])
 
 with t1:
     cur = inv[inv.Snapshot_Month == sel]; y12 = inv[inv.Snapshot_Month >= cut]
@@ -229,15 +230,17 @@ with t3:
     st.write("")
     insight(f"Internal logistics (Transfers) can safely cover **{tr.Qty.sum()/max(sc.Order_Qty.sum(), 1):.0%}** of the required order units, directly reducing the {sc.Order_Value.sum()/1e6:,.1f}M EGP capital requirement.")
     
-    a, b = st.columns([1.3, 1])
-    with a, st.container(border=True):
+   
+    with st.container(border=True):
         st.markdown("**Smart Inter-Branch Transfers (Overstock to Stockout)**")
         if not tr.empty:
-            st.dataframe(tr[['Product_ID', 'From', 'To', 'Qty', 'Value']].head(8), use_container_width=True, hide_index=True)
+            st.dataframe(tr[['Product_ID', 'From', 'To', 'Qty', 'Value']].head(10), use_container_width=True, hide_index=True)
         else:
             st.info("No viable transfers found.")
-            
-    with b, st.container(border=True):
+
+
+with t4:
+    with st.container(border=True):
         st.markdown("**AI Demand Forecast (Next 30/60/90 Days)**")
         
         ext = DATA + "Forecast_Results.csv"
@@ -254,6 +257,6 @@ with t3:
                 
                 display_cols = ['Product_ID', 'Forecast_30d', 'Cum_60d', 'Cum_90d']
                 e_display = e[[c for c in display_cols if c in e.columns]].copy()
-                st.dataframe(e_display.head(8), use_container_width=True, hide_index=True)
+                st.dataframe(e_display.head(15), use_container_width=True, hide_index=True)
         else:
             st.info("Pending ML model output... Please place 'Forecast_Results.csv' in the data folder.")
