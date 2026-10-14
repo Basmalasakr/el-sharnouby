@@ -6,7 +6,7 @@ import numpy as np, pandas as pd, plotly.express as px, plotly.graph_objects as 
 from sklearn.tree import DecisionTreeRegressor
 from theme import header, kpi, pill, insight, plot, PRIMARY, PALETTE
 
-# استدعاء العقل المركزي
+
 try:
     from ai_layer import get_ai_insights
 except ImportError:
@@ -15,7 +15,7 @@ except ImportError:
     except ImportError:
         get_ai_insights = None
 
-# كود CSS سحري لدعم اللغة العربية وتنسيق الفاتورة والجداول والشات (RTL)
+
 st.markdown("""
 <style>
 div[data-testid="stChatMessage"] {
@@ -82,7 +82,7 @@ def rank_corr(a, b):
 tot_net, end, w = load()
 c12 = (end.to_period("M") - 11).to_timestamp(); w12 = w[w.Order_Date >= c12].copy()
 
-# 1. التعديل الأول: اسم التاب الخارجي باللغة الإنجليزية
+
 t1, t2, t3 = st.tabs(["1. The problem: evidence", "2. AI Deal Desk & Policy Optimizer", "3. B2B Auto-Biller"])
 
 with t1:
@@ -241,7 +241,7 @@ with t2:
                 st.markdown(f"*Applying this policy retroactively to the selected period would have protected the company from below-cost sales and saved this amount.*")
 
 with t3:
-    # 2. التعديل الثاني: العنوان الداخلي بالعربي
+    
     st.markdown("### بوابة فواتير الجملة الآلية")
     
     if get_ai_insights is None:
@@ -267,7 +267,7 @@ with t3:
                 response = get_ai_insights(context_data=b2b_context, user_query=prompt, role_type="B2B Sales Rep")
                 st.session_state.latest_response = response
                 
-                # 3. التعديل الثالث: Decision Log (Invoice Log)
+                
                 log_path = DATA / "B2B_Invoice_Log.csv"
                 new_log = pd.DataFrame({
                     "Timestamp": [pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")],
@@ -280,8 +280,7 @@ with t3:
                     else:
                         new_log.to_csv(log_path, index=False, encoding='utf-8-sig')
                 except Exception as e:
-                    pass # تخطي في حالة خطأ الحفظ حتى لا يزعج المستخدم
-
+                    pass 
         if st.session_state.latest_query:
             with st.chat_message("user"):
                 st.markdown(st.session_state.latest_query)
@@ -291,7 +290,7 @@ with t3:
                 
                 st.write("") 
                 
-                # 4. التعديل الرابع: تحويل الفاتورة لصيغة CSV (Excel)
+                
                 def extract_table(md_text):
                     lines = [line.strip() for line in md_text.split('\n') if '|' in line]
                     if not lines or len(lines) < 2: return None
@@ -311,7 +310,7 @@ with t3:
                 df_invoice = extract_table(st.session_state.latest_response)
                 
                 if df_invoice is not None:
-                    # تحويل الجدول إلى CSV متوافق مع الإكسيل
+                    
                     csv_data = df_invoice.to_csv(index=False).encode('utf-8-sig')
                     st.download_button(
                         label=" تحميل الفاتورة (Excel/CSV)",
@@ -321,7 +320,6 @@ with t3:
                         type="primary"
                     )
                 else:
-                    # في حالة فشل التحويل نرجع للنص العادي كبديل
                     download_data = "\ufeff" + st.session_state.latest_response
                     st.download_button(
                         label="📥 تحميل الفاتورة",
