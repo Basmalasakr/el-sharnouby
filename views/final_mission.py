@@ -1,9 +1,56 @@
 import os
 import time
+import io
 from pathlib import Path
 import numpy as np, pandas as pd, plotly.express as px, plotly.graph_objects as go, streamlit as st
 from sklearn.tree import DecisionTreeRegressor
 from theme import header, kpi, pill, insight, plot, PRIMARY, PALETTE
+
+# استدعاء العقل المركزي
+try:
+    from ai_layer import get_ai_insights
+except ImportError:
+    try:
+        from views.ai_layer import get_ai_insights
+    except ImportError:
+        get_ai_insights = None
+
+# كود CSS سحري لدعم اللغة العربية وتنسيق الفاتورة والجداول والشات (RTL)
+st.markdown("""
+<style>
+div[data-testid="stChatMessage"] {
+    direction: rtl;
+    text-align: right;
+}
+div[data-testid="stChatInput"] {
+    direction: rtl;
+}
+div[data-testid="stChatInput"] textarea {
+    direction: rtl;
+    text-align: right;
+}
+.stMarkdown table {
+    direction: rtl;
+    text-align: right;
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    margin-bottom: 15px;
+}
+.stMarkdown th {
+    background-color: #f8f9fa;
+    color: #1f2937;
+    text-align: right !important;
+    padding: 10px;
+    border: 1px solid #e5e7eb;
+}
+.stMarkdown td {
+    text-align: right !important;
+    padding: 10px;
+    border: 1px solid #e5e7eb;
+}
+</style>
+""", unsafe_allow_html=True)
 
 DATA = Path(os.environ.get("DATA_DIR") or Path(__file__).resolve().parents[1] / "data")
 header("Wholesale Deal Desk & Price Guardrail", "Is every wholesale discount earned? Check a quote, set a policy, size the prize.", "APP 08")
@@ -35,7 +82,8 @@ def rank_corr(a, b):
 tot_net, end, w = load()
 c12 = (end.to_period("M") - 11).to_timestamp(); w12 = w[w.Order_Date >= c12].copy()
 
-t1, t2 = st.tabs(["1. The problem: evidence", "2. AI Deal Desk & Policy Optimizer"])
+# 1. التعديل الأول: اسم التاب الخارجي باللغة الإنجليزية
+t1, t2, t3 = st.tabs(["1. The problem: evidence", "2. AI Deal Desk & Policy Optimizer", "3. B2B Auto-Biller"])
 
 with t1:
     bc = w[w.Gross_Profit_EGP <= 0]; bc12 = w12[w12.Gross_Profit_EGP <= 0]
@@ -191,3 +239,97 @@ with t2:
                 i1.markdown(kpi("Recovered Profit", f"+ {d_gp/1e6:,.2f}M EGP", "Simulation output", "ok"), unsafe_allow_html=True)
                 i2.markdown(kpi("New Margin", f"{gp_new.sum()/net_new.sum():.1%}", f"Improved from {gp0/net0:.1%}", "info"), unsafe_allow_html=True)
                 st.markdown(f"*Applying this policy retroactively to the selected period would have protected the company from below-cost sales and saved this amount.*")
+
+with t3:
+    # 2. التعديل الثاني: العنوان الداخلي بالعربي
+    st.markdown("### بوابة فواتير الجملة الآلية")
+    
+    if get_ai_insights is None:
+        st.error(" برجاء التأكد من وجود ملف `ai_layer.py` لعمل النظام.")
+    else:
+        if "latest_query" not in st.session_state:
+            st.session_state.latest_query = None
+            st.session_state.latest_response = None
+
+        if prompt := st.chat_input("اكتب طلب التاجر هنا (الكميات وأكواد المنتجات المطلوبة) ..."):
+            st.session_state.latest_query = prompt
+            
+            with st.spinner("جاري فحص المخزون وإصدار الفاتورة المبدئية..."):
+                u = w.groupby(["Product_ID", "Product_Name"]).agg(list_u=("Gross_Sales_EGP", "sum"), cogs=("Estimated_COGS_EGP", "sum"), q=("Quantity", "sum")).reset_index()
+                u["list_u"] = u.list_u / u.q
+                
+                context_lines = []
+                for r in u.dropna().itertuples():
+                    context_lines.append(f"كود {r.Product_ID} ({r.Product_Name}): السعر الأساسي {r.list_u:.2f} ج.م")
+                
+                b2b_context = "قائمة أسعار الجملة المتاحة للرد على العميل:\n" + "\n".join(context_lines)
+                
+                response = get_ai_insights(context_data=b2b_context, user_query=prompt, role_type="B2B Sales Rep")
+                st.session_state.latest_response = response
+                
+                # 3. التعديل الثالث: Decision Log (Invoice Log)
+                log_path = DATA / "B2B_Invoice_Log.csv"
+                new_log = pd.DataFrame({
+                    "Timestamp": [pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")],
+                    "Trader_Request": [prompt],
+                    "AI_Invoice": [response]
+                })
+                try:
+                    if log_path.exists():
+                        new_log.to_csv(log_path, mode='a', header=False, index=False, encoding='utf-8-sig')
+                    else:
+                        new_log.to_csv(log_path, index=False, encoding='utf-8-sig')
+                except Exception as e:
+                    pass # تخطي في حالة خطأ الحفظ حتى لا يزعج المستخدم
+
+        if st.session_state.latest_query:
+            with st.chat_message("user"):
+                st.markdown(st.session_state.latest_query)
+            
+            with st.chat_message("assistant"):
+                st.markdown(st.session_state.latest_response)
+                
+                st.write("") 
+                
+                # 4. التعديل الرابع: تحويل الفاتورة لصيغة CSV (Excel)
+                def extract_table(md_text):
+                    lines = [line.strip() for line in md_text.split('\n') if '|' in line]
+                    if not lines or len(lines) < 2: return None
+                    data_lines = [line for line in lines if not all(c in '| -' for c in line)]
+                    if not data_lines or len(data_lines) < 1: return None
+                    
+                    try:
+                        headers = [col.strip() for col in data_lines[0].split('|')[1:-1]]
+                        rows = []
+                        for line in data_lines[1:]:
+                            cols = [col.strip() for col in line.split('|')[1:-1]]
+                            rows.append(cols)
+                        return pd.DataFrame(rows, columns=headers)
+                    except:
+                        return None
+                
+                df_invoice = extract_table(st.session_state.latest_response)
+                
+                if df_invoice is not None:
+                    # تحويل الجدول إلى CSV متوافق مع الإكسيل
+                    csv_data = df_invoice.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(
+                        label=" تحميل الفاتورة (Excel/CSV)",
+                        data=csv_data,
+                        file_name=f"Invoice_{int(time.time())}.csv",
+                        mime="text/csv",
+                        type="primary"
+                    )
+                else:
+                    # في حالة فشل التحويل نرجع للنص العادي كبديل
+                    download_data = "\ufeff" + st.session_state.latest_response
+                    st.download_button(
+                        label="📥 تحميل الفاتورة",
+                        data=download_data,
+                        file_name=f"Invoice_{int(time.time())}.txt",
+                        mime="text/plain",
+                        type="primary"
+                    )
+        else:
+            with st.chat_message("assistant"):
+                st.markdown("أهلاً بك. أدخل الكميات والأكواد المطلوبة لإصدار الفاتورة.")
