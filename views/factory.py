@@ -8,6 +8,11 @@ import streamlit as st
 from theme import header, kpi, insight, plot
 
 try:
+    from notifier import send_alert
+except ImportError:
+    send_alert = None
+
+try:
     from groq import Groq
 except ImportError:
     pass 
@@ -117,7 +122,6 @@ with t2:
                 pareto_df['Cumulative_Pct'] = (pareto_df['Estimated_Loss_EGP'].cumsum() / pareto_df['Estimated_Loss_EGP'].sum()) * 100
                 insight(f"**EXECUTIVE RECOMMENDATION:** The root cause **'{top_cause}'** is responsible for the highest financial leakage (**{top_loss:,.0f} EGP**). Immediate corrective actions are required.")
                 
-                # --- الصف الأول: باريتو + الدونات شارت ---
                 c_q1, c_q2 = st.columns([1.5, 1])
                 
                 with c_q1, st.container(border=True):
@@ -148,7 +152,6 @@ with t2:
                             prod_loss['Loss_EGP'] = prod_loss['Loss_EGP'].apply(lambda x: f"{x:,.0f}")
                             st.dataframe(prod_loss, use_container_width=True, hide_index=True)
                 
-                # --- الصف الثاني: مصفوفة الإجراءات التصحيحية ---
                 with st.container(border=True):
                     st.markdown("**Ranked Corrective Action Priority Matrix**")
                     action_df = pareto_df.copy()
@@ -213,9 +216,8 @@ with t3:
 
 with t4:
     st.markdown("**AI Scenario Copilot & Advanced Simulation**")
-    st.caption("Select the scope of your simulation, then ask the AI to apply operational changes (e.g., 'What if material cost increases by 10% and overtime by 20%?').")
+    st.caption("Select the scope of your simulation, then ask the AI to apply operational changes.")
     
-    # --- إعداد فلاتر نطاق العمل (Scope) ---
     c_filters1, c_filters2, c_filters3 = st.columns(3)
     
     if not po.empty and 'Product_Name' in po.columns:
@@ -234,8 +236,7 @@ with t4:
     
     st.markdown("---")
     
-    # --- مربع السيناريو الذكي (AI Copilot) ---
-    user_scenario = st.text_input("Describe your operational changes (Arabic/English):", placeholder="مثال: ماذا يحدث للطلبيات المتأخرة إذا تم زيادة الأوفر تايم بنسبة 20% وتكلفة الخامات زادت 10%؟")
+    user_scenario = st.text_input("Describe your operational changes:")
     
     if st.button("Run AI Simulation", type="primary"):
         if not user_scenario:
@@ -249,7 +250,7 @@ with t4:
                     1. 'overtime_pct': The percentage of overtime increase.
                     2. 'material_cost_pct': The percentage of material cost increase.
                     If a value is not mentioned, set it to 0.
-                    Output ONLY a valid JSON object. No explanations, no markdown tags."""
+                    Output ONLY a valid JSON object."""
                     
                     response = client.chat.completions.create(
                         model="openai/gpt-oss-20b",
@@ -271,7 +272,6 @@ with t4:
                 
                 if ot_sim >= 0 or mat_cost_sim >= 0:
                     
-                    # --- تطبيق الفلاتر التي اختارها المستخدم ---
                     filtered_po = po.copy()
                     
                     if selected_product != "All Products" and not filtered_po.empty:
@@ -304,5 +304,10 @@ with t4:
                             st.markdown("**Copilot Recommendation:** The financial impact of the material cost increase outweighs the operational benefits of the overtime recovery in this specific scope. Re-evaluate supplier contracts immediately.")
                         elif ot_sim > 0:
                             st.markdown(f"**Copilot Recommendation:** Proceed with the {ot_sim}% overtime plan for this scope. Focus this capacity on the primary bottleneck machine to maximize the recovery of the {recovered_orders} delayed orders.")
+
+                        if send_alert and st.button("Forward Simulation to CEO for Approval"):
+                            msg = f"Factory Copilot Simulation\n\nRecovered Orders: {recovered_orders}\nCOGS Impact: +{cogs_increase/1e6:,.2f}M EGP\n\nApprove Operational Changes?"
+                            send_alert(msg)
+                            st.toast("Simulation forwarded to Telegram!")
                     else:
                         st.warning("No data matches the selected criteria. Please try a different scope.")
