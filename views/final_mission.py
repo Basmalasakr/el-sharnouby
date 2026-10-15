@@ -6,6 +6,10 @@ import numpy as np, pandas as pd, plotly.express as px, plotly.graph_objects as 
 from sklearn.tree import DecisionTreeRegressor
 from theme import header, kpi, pill, insight, plot, PRIMARY, PALETTE
 
+try:
+    from notifier import send_alert
+except ImportError:
+    send_alert = None
 
 try:
     from ai_layer import get_ai_insights
@@ -14,7 +18,6 @@ except ImportError:
         from views.ai_layer import get_ai_insights
     except ImportError:
         get_ai_insights = None
-
 
 st.markdown("""
 <style>
@@ -82,7 +85,6 @@ def rank_corr(a, b):
 tot_net, end, w = load()
 c12 = (end.to_period("M") - 11).to_timestamp(); w12 = w[w.Order_Date >= c12].copy()
 
-
 t1, t2, t3 = st.tabs(["1. The problem: evidence", "2. AI Deal Desk & Policy Optimizer", "3. B2B Auto-Biller"])
 
 with t1:
@@ -112,13 +114,16 @@ with t1:
         rows += [("Year", str(n), v) for n, v in w.groupby(w.Order_Date.dt.year).Discount_Pct.mean().items()]
         d = pd.DataFrame(rows, columns=["Group", "Item", "Discount"])
         fig = px.bar(d, x="Item", y="Discount", color="Group", color_discrete_sequence=PALETTE + ["#F59E0B"])
-        fig.update_yaxes(tickformat=".0%", range=[0, 0.4]); fig.update_xaxes(tickangle=-35, title_text=""); plot(fig, 300, legend=True)
+        fig.update_yaxes(tickformat=".0%", range=[0, 0.4]); fig.update_xaxes(tickangle=-35, title_text="")
+        plot(fig, 300, legend=True)
     with b, st.container(border=True):
         st.markdown("**Gross margin by discount band**")
         bands = pd.cut(w.Discount_Pct, [.275, .30, .32, .34, .36, .385], labels=["28–30%", "30–32%", "32–34%", "34–36%", "36–38%"])
         mb = w.groupby(bands, observed=True).agg(n=("Net_Sales_EGP", "sum"), g=("Gross_Profit_EGP", "sum"), lines=("Invoice_ID", "size")).reset_index().rename(columns={"Discount_Pct": "Band"})
         mb["Margin"] = mb.g / mb.n
-        fig = px.bar(mb, x="Band", y="Margin", color_discrete_sequence=[PRIMARY], text=mb.Margin.map("{:.1%}".format)); fig.update_yaxes(tickformat=".0%"); plot(fig, 300)
+        fig = px.bar(mb, x="Band", y="Margin", color_discrete_sequence=[PRIMARY], text=mb.Margin.map("{:.1%}".format))
+        fig.update_yaxes(tickformat=".0%")
+        plot(fig, 300)
     
     c1, c2 = st.columns([1.3, 1])
     g = (bc.groupby(["Product_ID", "Product_Name"]).agg(lines=("Invoice_ID", "size"), loss=("Gross_Profit_EGP", "sum")).reset_index().sort_values("loss"))
@@ -134,7 +139,8 @@ with t1:
                     f'{rows}</table>', unsafe_allow_html=True)
     with c2, st.container(border=True):
         st.markdown("**Discount distribution (all wholesale lines)**")
-        fig = px.histogram(w, x="Discount_Pct", nbins=11, color_discrete_sequence=["#93C5FD"]); fig.update_xaxes(tickformat=".0%", title_text=""); plot(fig, 270)
+        fig = px.histogram(w, x="Discount_Pct", nbins=11, color_discrete_sequence=["#93C5FD"]); fig.update_xaxes(tickformat=".0%", title_text="")
+        plot(fig, 270)
 
 with t2:
     st.markdown("**AI Deal Desk & Policy Optimizer**")
@@ -210,6 +216,9 @@ with t2:
                 st.warning(f"Alert: The recommended discount was reduced from {ai_tier_discount*100:.0f}% to {final_discount*100:.0f}% to protect the gross margin of this high-cost product.")
             elif guardrail_discount < 0:
                 st.error("Critical Alert: This product is sold at a loss or at cost even without any discounts. No discount is recommended.")
+                if send_alert:
+                    msg = f"URGENT: Profit Leakage Alert\n\nProduct: {pick}\nQuantity: {qty}\nStatus: Selling at loss/cost without discounts.\n\nAction: Halt all wholesale discounts for this SKU immediately."
+                    send_alert(msg)
                 
             st.write("")
             
@@ -241,11 +250,10 @@ with t2:
                 st.markdown(f"*Applying this policy retroactively to the selected period would have protected the company from below-cost sales and saved this amount.*")
 
 with t3:
-    
     st.markdown("### بوابة فواتير الجملة الآلية")
     
     if get_ai_insights is None:
-        st.error(" برجاء التأكد من وجود ملف `ai_layer.py` لعمل النظام.")
+        st.error("برجاء التأكد من وجود ملف `ai_layer.py` لعمل النظام.")
     else:
         if "latest_query" not in st.session_state:
             st.session_state.latest_query = None
@@ -267,7 +275,6 @@ with t3:
                 response = get_ai_insights(context_data=b2b_context, user_query=prompt, role_type="B2B Sales Rep")
                 st.session_state.latest_response = response
                 
-                
                 log_path = DATA / "B2B_Invoice_Log.csv"
                 new_log = pd.DataFrame({
                     "Timestamp": [pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")],
@@ -280,7 +287,8 @@ with t3:
                     else:
                         new_log.to_csv(log_path, index=False, encoding='utf-8-sig')
                 except Exception as e:
-                    pass 
+                    pass
+
         if st.session_state.latest_query:
             with st.chat_message("user"):
                 st.markdown(st.session_state.latest_query)
@@ -289,7 +297,6 @@ with t3:
                 st.markdown(st.session_state.latest_response)
                 
                 st.write("") 
-                
                 
                 def extract_table(md_text):
                     lines = [line.strip() for line in md_text.split('\n') if '|' in line]
@@ -310,10 +317,9 @@ with t3:
                 df_invoice = extract_table(st.session_state.latest_response)
                 
                 if df_invoice is not None:
-                    
                     csv_data = df_invoice.to_csv(index=False).encode('utf-8-sig')
                     st.download_button(
-                        label=" تحميل الفاتورة (Excel/CSV)",
+                        label="تحميل الفاتورة (Excel/CSV)",
                         data=csv_data,
                         file_name=f"Invoice_{int(time.time())}.csv",
                         mime="text/csv",
@@ -322,12 +328,23 @@ with t3:
                 else:
                     download_data = "\ufeff" + st.session_state.latest_response
                     st.download_button(
-                        label="📥 تحميل الفاتورة",
+                        label="تحميل الفاتورة",
                         data=download_data,
                         file_name=f"Invoice_{int(time.time())}.txt",
                         mime="text/plain",
                         type="primary"
                     )
+                
+                if send_alert:
+                    st.write("")
+                    if st.button("إرسال الفاتورة للمدير التنفيذي للاعتماد", use_container_width=True):
+                        msg = (
+                            f"B2B Invoice Approval Request\n\n"
+                            f"Trader Request:\n{st.session_state.latest_query}\n\n"
+                            f"Action: Review and approve the generated invoice for this deal?"
+                        )
+                        send_alert(msg)
+                        st.toast("تم إرسال الفاتورة للمدير عبر تليجرام!")
         else:
             with st.chat_message("assistant"):
                 st.markdown("أهلاً بك. أدخل الكميات والأكواد المطلوبة لإصدار الفاتورة.")
