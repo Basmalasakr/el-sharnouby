@@ -6,6 +6,11 @@ import plotly.graph_objects as go
 import streamlit as st
 from theme import header, kpi, insight, plot
 
+try:
+    from notifier import send_alert
+except ImportError:
+    send_alert = None
+
 DATA = "data/"
 CH = {"LOC001": "Retail", "LOC002": "Online", "LOC003": "Wholesale"}
 OVERSTOCK_DOC = 180
@@ -164,7 +169,6 @@ with st.container(border=True):
     buf = c3.slider("Lead Time Delay (days)", 0, 30, 0, 1)
     review = c4.slider("Review cycle (days)", 7, 60, 30, 1)
 
- 
 t1, t2, t3, t4 = st.tabs(["1. Health & Financial Leakage", "2. Intelligence (ABC/XYZ)", "3. Action Plan & Transfers", "4. AI Demand Forecasting"])
 
 with t1:
@@ -230,14 +234,24 @@ with t3:
     st.write("")
     insight(f"Internal logistics (Transfers) can safely cover **{tr.Qty.sum()/max(sc.Order_Qty.sum(), 1):.0%}** of the required order units, directly reducing the {sc.Order_Value.sum()/1e6:,.1f}M EGP capital requirement.")
     
-   
     with st.container(border=True):
         st.markdown("**Smart Inter-Branch Transfers (Overstock to Stockout)**")
         if not tr.empty:
             st.dataframe(tr[['Product_ID', 'From', 'To', 'Qty', 'Value']].head(10), use_container_width=True, hide_index=True)
+            if send_alert and st.button("Send Top Transfer to CEO for Approval"):
+                top_transfer = tr.iloc[0]
+                msg = (
+                    f"Inventory Transfer Request\n\n"
+                    f"Product: {top_transfer['Product_ID']}\n"
+                    f"From: {top_transfer['From']} -> To: {top_transfer['To']}\n"
+                    f"Qty: {top_transfer['Qty']} Units\n"
+                    f"Saved Capital: {top_transfer['Value']:,.0f} EGP\n\n"
+                    f"Approve this transfer?"
+                )
+                send_alert(msg)
+                st.toast("Transfer request sent to Telegram!")
         else:
             st.info("No viable transfers found.")
-
 
 with t4:
     with st.container(border=True):
