@@ -1,0 +1,12 @@
+{
+  "observe_days": 7,
+  "target_days": 60,
+  "top_quantile": 0.7,
+  "hit_threshold_qty": 1189.9999999999995,
+  "n_products": 59,
+  "features": [
+    "qty_7d",
+    "sales_7d",
+    "customers_7d"
+  ]
+}
