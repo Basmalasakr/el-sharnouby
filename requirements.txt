@@ -4,3 +4,6 @@ plotly
 scipy
 scikit-learn
 Groq
+numpy
+joblib
+requests
