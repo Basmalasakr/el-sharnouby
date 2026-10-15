@@ -9,6 +9,11 @@ import streamlit as st
 from theme import header, kpi, pill, insight, plot, PRIMARY, PALETTE
 
 try:
+    from notifier import send_alert
+except ImportError:
+    send_alert = None
+
+try:
     from ai_layer import get_ai_insights
 except ImportError:
     try:
@@ -55,7 +60,8 @@ allch = sorted(s.Channel.unique())
 chs = st.multiselect("Filter by Channel:", allch, default=allch)
 d = s[s.Channel.isin(chs)]
 if d.empty:
-    st.warning("Select at least one channel."); st.stop()
+    st.warning("Select at least one channel.")
+    st.stop()
 
 main_t1, main_t2 = st.tabs(["1. Executive Dashboard (Analytics)", "2. Omnichannel AI Copilot (God Mode)"])
 
@@ -102,22 +108,27 @@ with main_t1:
         st.markdown("**Monthly net sales**")
         ms = mon.reset_index()
         fig = px.line(ms, x="Order_Date", y="Net_Sales_EGP", color_discrete_sequence=[PRIMARY])
-        fig.update_yaxes(rangemode="tozero"); plot(fig, 250)
+        fig.update_yaxes(rangemode="tozero")
+        plot(fig, 250)
 
     c1, c2 = st.columns(2)
     with c1, st.container(border=True):
         st.markdown("**Seasonality index** (1.0 = average month)")
         mm = d.groupby([d.Order_Date.dt.year, d.Order_Date.dt.month]).Net_Sales_EGP.sum()
-        si = mm.groupby(level=1).mean(); si = (si / si.mean()).reset_index()
-        si.columns = ["Month", "Index"]; si["Month"] = si.Month.map(lambda x: pd.Timestamp(2000, x, 1).strftime("%b"))
-        fig = px.bar(si, x="Month", y="Index", color_discrete_sequence=[PRIMARY]); plot(fig, 250)
+        si = mm.groupby(level=1).mean()
+        si = (si / si.mean()).reset_index()
+        si.columns = ["Month", "Index"]
+        si["Month"] = si.Month.map(lambda x: pd.Timestamp(2000, x, 1).strftime("%b"))
+        fig = px.bar(si, x="Month", y="Index", color_discrete_sequence=[PRIMARY])
+        plot(fig, 250)
         st.caption("Averaged over available years; growth trend slightly inflates later months.")
     with c2, st.container(border=True):
         st.markdown("**Product family contribution**")
         f = d.groupby("Product_Family").agg(net=("Net_Sales_EGP", "sum"), gp=("Gross_Profit_EGP", "sum")).sort_values("net", ascending=False)
         dn = px.pie(f.reset_index(), values="net", names="Product_Family", hole=0.62, color_discrete_sequence=PALETTE)
         dn.update_traces(textinfo="percent", sort=False)
-        dn.update_layout(legend=dict(orientation="h", y=-0.05)); plot(dn, 210, legend=True)
+        dn.update_layout(legend=dict(orientation="h", y=-0.05))
+        plot(dn, 210, legend=True)
         rows = "".join(f"<tr><td>{n}</td><td>{r.net/1e6:,.1f}M</td><td>{r.net/net:.0%}</td><td>{pill(f'{r.gp/r.net:.1%}', 'bad' if r.gp/r.net < .2 else 'ok')}</td></tr>" for n, r in f.iterrows())
         st.markdown(f'<table class="tbl"><tr><th>FAMILY</th><th>NET SALES</th><th>SHARE</th><th>MARGIN</th></tr>{rows}</table>', unsafe_allow_html=True)
 
@@ -125,10 +136,13 @@ with main_t1:
         st.markdown("**Discount impact on margin**")
         bands = pd.cut(d.Discount_Pct, [-0.001, 0, 0.10, 0.20, 0.30, 0.60], labels=["0%", "0-10%", "10-20%", "20-30%", ">30%"])
         db = d.groupby(bands, observed=True).agg(net=("Net_Sales_EGP", "sum"), gp=("Gross_Profit_EGP", "sum"))
-        db["Margin"] = db.gp / db.net; db = db.reset_index().rename(columns={"Discount_Pct": "Discount band"})
+        db["Margin"] = db.gp / db.net
+        db = db.reset_index().rename(columns={"Discount_Pct": "Discount band"})
         x1, x2 = st.columns([1.2, 1])
         with x1:
-            fig = px.bar(db, x="Discount band", y="Margin", color_discrete_sequence=[PRIMARY]); fig.update_yaxes(tickformat=".0%"); plot(fig, 230)
+            fig = px.bar(db, x="Discount band", y="Margin", color_discrete_sequence=[PRIMARY])
+            fig.update_yaxes(tickformat=".0%")
+            plot(fig, 230)
         with x2:
             st.dataframe(db.assign(**{"Net Sales (M)": (db.net / 1e6).map("{:,.1f}".format), "Margin": (db.Margin * 100).map("{:.1f}".format)})[["Discount band", "Net Sales (M)", "Margin"]].rename(columns={"Margin": "Margin %"}), hide_index=True, width="stretch")
 
@@ -137,7 +151,8 @@ with main_t1:
         st.markdown("**Net sales by customer governorate**")
         gv = d.groupby("Customer_Governorate").Net_Sales_EGP.sum().sort_values().div(1e6).reset_index()
         fig = px.bar(gv, x="Net_Sales_EGP", y="Customer_Governorate", orientation="h", color_discrete_sequence=[PRIMARY])
-        fig.update_xaxes(ticksuffix="M"); plot(fig, 360)
+        fig.update_xaxes(ticksuffix="M")
+        plot(fig, 360)
     with g2, st.container(border=True):
         st.markdown("**Top 10 customers**")
         cu = d.groupby("Customer_ID").agg(net=("Net_Sales_EGP", "sum"), gp=("Gross_Profit_EGP", "sum")).sort_values("net", ascending=False)
@@ -211,6 +226,11 @@ with main_t2:
                         "Business Query": user_query,
                         "Approved Decision (Closed Loop)": agents_data.get("finance_agent_decision", "")
                     })
+                    
+                    if send_alert:
+                        msg = f"Control Tower AI Insight\n\nQuery: {user_query}\nDecision: {agents_data.get('finance_agent_decision', '')}\n\nAction: Implement this strategy?"
+                        send_alert(msg)
+                        st.toast("AI Strategy forwarded to Executive via Telegram!")
                 else:
                     st.error("AI Error: " + agents_data.get("error", "Unknown Error"))
 
